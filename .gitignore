@@ -3,6 +3,7 @@
 __pycache__
 datasets
 package-lock.json
+model.h5
 
 # dependencies
 /node_modules

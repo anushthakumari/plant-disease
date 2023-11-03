@@ -1,0 +1,27 @@
+install the dependecies:
+
+run below command
+1- pip install -r requirements.txt 
+
+
+
+
+Model Setup:
+
+1 - create folder 'datasets'
+2 - extract the following dataset: https://drive.google.com/drive/folders/1FS1oX1XQsGmnqjTNXAdWsYQ2QxmVbtB4
+
+
+
+Train the model:
+
+run below command
+> python train_model.py
+After running above command it will create a model name 'model.h5'
+
+
+
+Start the server:
+
+run below command
+>python server.py

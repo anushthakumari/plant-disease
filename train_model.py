@@ -1,211 +1,223 @@
 
-#Extract zip files - plantvillage dataset
-import zipfile
-zip_ref = zipfile.ZipFile('./datasets/archive.zip','r')
-zip_ref.extractall('./content')
-zip_ref.close()
+import numpy as np 
+import pandas as pd
 
-#import modules
-from keras.layers import Input, Lambda, Dense, Flatten
-from keras.models import Model
-import tensorflow as tf
-from tensorflow import keras
-import tensorflow as tf
-import matplotlib.pyplot as py
-from keras.applications.resnet_v2 import ResNet152V2
-from keras.applications.mobilenet_v2 import MobileNetV2
-from keras.applications.inception_v3 import InceptionV3
-from keras.applications.efficientnet import EfficientNetB3,preprocess_input
-from keras.applications.inception_v3 import preprocess_input
-from keras.preprocessing import image
-from keras.preprocessing.image import ImageDataGenerator
-from keras.utils import load_img,img_to_array
-from keras.models import Sequential
-from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Activation, Dropout, BatchNormalization
-from keras import regularizers
-import numpy as np
-from glob import glob
-import pandas as p
 import os
+
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+# get_ipython().run_line_magic('matplotlib', 'inline')
+import seaborn as sns
 import cv2
-from keras.models import load_model
-import shutil
+import os
+from tqdm import tqdm
+from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import train_test_split
-# from PIL import image
-from sklearn.metrics import accuracy_score
-
-
-# Functions to Create Data Frame from Dataset
-# Generate data paths with labels
-def define_paths(img_dir):
-    filepaths = [] #creating empty list
-    labels = []
-
-    folds = os.listdir(img_dir) # list directories inside img_dir
-    for fold in folds:
-        foldpath = os.path.join(img_dir, fold) #concatenate each dir inside img_dir with img_dir and storing them in foldpath
-        filelist = os.listdir(foldpath) #now access image files
-        for files_l in filelist:
-            fpath = os.path.join(foldpath, files_l)
-            filepaths.append(fpath) #append those image directories in filepaths
-            labels.append(fold)# append folder name which are their corresponding label
-
-    return filepaths, labels
-
-# Concatenate data paths with labels into one dataframe ( to later be fitted into the model )
-def define_df(files, classes):
-    F = p.Series(files, name= 'file_dir') #creating series of file paths
-    L = p.Series(classes, name='labels') #creating series of labels
-    return p.concat([F, L], axis= 1)
-
-# Split dataframe to train, valid, and test
-def split_data(img_dir):
-    # train dataframe
-    files, classes = define_paths(img_dir) #calling define_paths function which will return file_paths and labels
-    df = define_df(files, classes) #calling define_df function
-    strat = df['labels'] #using stratify to uniformly distribute instances of classes in both dataframe , i.e. train and dummy to prevent model from getting biased towards any particular class.
-    train_df, dummy_df = train_test_split(df,  train_size= 0.8, shuffle= True, random_state= 123, stratify= strat)
-
-    # valid and test dataframe
-    strat = dummy_df['labels']
-    valid_df, test_df = train_test_split(dummy_df,  train_size= 0.5, shuffle= True, random_state= 123, stratify= strat)
-
-    return train_df, valid_df, test_df
-
-
-'''
-    This function takes train, validation, and test dataframe and fit them into image data generator, because model takes data from image data generator.
-    Image data generator converts images into tensors. '''
-def create_gens (train_df, valid_df, test_df, batch_size):
-
-    img_size = (300, 300) # setting it according to image size used in pretrained model
-    channels = 3
-    color = 'rgb'
-    img_shape = (img_size[0], img_size[1], channels) #defines that image has 300 X 300 pixels dimension and RGB system
-
-
-    ts_length = len(test_df)
-    test_batch_size = max(sorted([ts_length // n for n in range(1, ts_length + 1) if ts_length%n == 0 and ts_length/n <= 80]))
-
-    test_steps = ts_length // test_batch_size
-
-    # This function which will be used in image data generator for data augmentation, it just take the image and return it again.
-    def scalar(img):
-        return img
-
-    tr_gen = ImageDataGenerator(preprocessing_function= scalar, horizontal_flip= True)
-    ts_gen = ImageDataGenerator(preprocessing_function= scalar)
-
-    train_gen = tr_gen.flow_from_dataframe( train_df, x_col= 'file_dir', y_col= 'labels', target_size= img_size, class_mode= 'sparse',
-                                        color_mode= color, shuffle= True, batch_size= batch_size)
-
-    valid_gen = ts_gen.flow_from_dataframe( valid_df, x_col= 'file_dir', y_col= 'labels', target_size= img_size, class_mode= 'sparse',
-                                        color_mode= color, shuffle= True, batch_size= batch_size)
-
-    test_gen = ts_gen.flow_from_dataframe( test_df, x_col= 'file_dir', y_col= 'labels', target_size= img_size, class_mode= 'sparse',
-                                        color_mode= color, shuffle= False, batch_size= test_batch_size)
-
-    return train_gen, valid_gen, test_gen
+from keras.utils.np_utils import to_categorical
+from keras.models import Model,Sequential, load_model
+from keras import Input
+from keras.layers import Dense, Dropout, Flatten, Conv2D, MaxPool2D, BatchNormalization, AveragePooling2D, GlobalAveragePooling2D
+from keras.optimizers import Adam
+from keras.preprocessing.image import ImageDataGenerator
+from keras.callbacks import ModelCheckpoint, ReduceLROnPlateau
+from keras.applications import DenseNet121
 
 
 
-data_dir = './content/plantvillage dataset/segmented'
+disease_types = ['Pepper__bell___Bacterial_spot','Pepper__bell___healthy','Potato___Early_blight','Potato___Late_blight','Potato___healthy','Tomato_Bacterial_spot','Tomato_Early_blight','Tomato_Late_blight','Tomato_Leaf_Mold','Tomato_Septoria_leaf_spot','Tomato_Spider_mites_Two_spotted_spider_mite','Tomato__Target_Spot','Tomato__Tomato_YellowLeaf__Curl_Virus','Tomato__Tomato_mosaic_virus','Tomato_healthy']
+data_dir = './datasets/PlantVillage/'
+train_dir = os.path.join(data_dir)
+#test_dir = os.path.join(data_dir, 'test')
 
 
-# Get splitted data
-train_df, valid_df, test_df = split_data(data_dir)
+train_data = []
+for defects_id, sp in enumerate(disease_types):
+    for file in os.listdir(os.path.join(train_dir, sp)):
+        train_data.append(['{}/{}'.format(sp, file), defects_id, sp])
+        
+train = pd.DataFrame(train_data, columns=['File', 'DiseaseID','Disease Type'])
+train.tail()
 
-# Get Generators
-batch_size = 40
-train_gen, valid_gen, test_gen = create_gens(train_df, valid_df, test_df, batch_size)
-
-
-#Getting number of output classes
-class_count = len(list(train_gen.class_indices.keys()))
-
-#Defining pretrained model ,  Model used - EfficientNetB3
-base_model = tf.keras.applications.efficientnet.EfficientNetB3(include_top= False, weights= "imagenet", input_shape= (300,300,3), pooling= 'max')
-
-
-#Using model's trained parameters without changing it
-for layer in base_model.layers:
-    layer.trainable = False
+# Randomize the order of training set
+SEED = 42
+train = train.sample(frac=1, random_state=SEED) 
+train.index = np.arange(len(train)) # Reset indices
+train.head()
 
 
+# Plot a histogram
+plt.hist(train['DiseaseID'])
+plt.title('Frequency Histogram of Species')
+plt.figure(figsize=(12, 12))
+plt.show()
 
-#Creating model
-new_model = Sequential()
-new_model.add(base_model)
-new_model.add(Flatten())
-new_model.add(BatchNormalization(axis= -1, momentum= 0.99, epsilon= 0.001))
-new_model.add(Dense(256, kernel_regularizer= regularizers.l2(l= 0.016), activity_regularizer= regularizers.l1(0.006),
-                activation= 'relu'))
-new_model.add(Dropout(rate= 0.45, seed= 123))
-new_model.add(Dense(class_count, activation= 'softmax'))
+# Display images for different species
+def plot_defects(defect_types, rows, cols):
+    fig, ax = plt.subplots(rows, cols, figsize=(12, 12))
+    defect_files = train['File'][train['Disease Type'] == defect_types].values
+    n = 0
+    for i in range(rows):
+        for j in range(cols):
+            image_path = os.path.join(data_dir, defect_files[n])
+            ax[i, j].set_xticks([])
+            ax[i, j].set_yticks([])
+            ax[i, j].imshow(cv2.imread(image_path))
+            n += 1
+# Displays first n images of class from training set
+plot_defects('Tomato_Bacterial_spot', 5, 5)
 
-new_model.compile(loss='sparse_categorical_crossentropy',optimizer=tf.keras.optimizers.Adam(0.0005),metrics=['accuracy'])
-new_model.summary()
+IMAGE_SIZE = 64
 
-#Set callback parameter , saving best parameter in final_model_weights1.hdf5
-checkpointer = [tf.keras.callbacks.EarlyStopping(monitor = 'val_accuracy', verbose = 1, restore_best_weights=True, mode="max",patience = 10),
-                tf.keras.callbacks.ModelCheckpoint(
-                    filepath='final_model_weights1.hdf5',
-                    monitor="val_accuracy",
-                    verbose=1,
-                    save_best_only=True,
-                    mode="max")]
+def read_image(filepath):
+    return cv2.imread(os.path.join(data_dir, filepath)) # Loading a color image is the default flag
+# Resize image to target size
+def resize_image(image, image_size):
+    return cv2.resize(image.copy(), image_size, interpolation=cv2.INTER_AREA)
 
-
-
-
-#implement earlystopping
-steps_per_epoch = train_gen.n // train_gen.batch_size
-validation_steps = valid_gen.n // valid_gen.batch_size
-history = new_model.fit(x=train_gen,
-                 validation_data=valid_gen,
-                 epochs=25,
-                 callbacks=[checkpointer],
-                 steps_per_epoch=steps_per_epoch,
-                 validation_steps=validation_steps,shuffle = False)
-
-
-
-#plottting accuracy curve for training and validation data
-py.plot(history.history['accuracy'],color='blue',label='train')
-py.plot(history.history['val_accuracy'],color='red',label='validation')
-py.legend()
-py.show()
+X_train = np.zeros((train.shape[0], IMAGE_SIZE, IMAGE_SIZE, 3))
+for i, file in tqdm(enumerate(train['File'].values)):
+    image = read_image(file)
+    if image is not None:
+        X_train[i] = resize_image(image, (IMAGE_SIZE, IMAGE_SIZE))
+# Normalize the data
+X_Train = X_train / 255.
+print('Train Shape: {}'.format(X_Train.shape))
 
 
-py.plot(history.history['loss'],color='blue',label='train')
-py.plot(history.history['val_loss'],color='red',label='validation')
-py.legend()
-py.show()
+Y_train = train['DiseaseID'].values
+Y_train = to_categorical(Y_train, num_classes=15)
+
+BATCH_SIZE = 64
+
+# Split the train and validation sets 
+X_train, X_val, Y_train, Y_val = train_test_split(X_Train, Y_train, test_size=0.2, random_state=SEED)
 
 
-#Evaluate model
-test_batch  = 32;
-train_eval = new_model.evaluate(train_gen,steps = test_batch,verbose=1) #checking for loss and accuracy for training data
-val_eval = new_model.evaluate(valid_gen,steps = test_batch,verbose=1)#checking for loss and accuracy for validation data
-test_eval = new_model.evaluate(test_gen,steps = test_batch,verbose=1)#checking for loss and accuracy for testing data
-print("Train Loss: ", round(train_eval[0]*100,2))
-print("Train Accuracy: ", round(train_eval[1]*100,2))
-print('-' * 20)
-print("Validation Loss: ", round(val_eval[0]*100,2))
-print("Validation Accuracy: ", round(val_eval[1]*100,2))
-print('-' * 20)
-print("Test Loss: ", round(test_eval[0]*100,2))
-print("Test Accuracy: ",round(test_eval[1]*100,2))
-
-#Making Predictions
-preds = new_model.predict(test_gen)
-
-a = np.argmax(preds, axis=1)
-test_labels = test_gen.classes
-
-#checking accuracy score for test generators
-accuracy_score(test_labels,a)
+fig, ax = plt.subplots(1, 3, figsize=(15, 15))
+for i in range(3):
+    ax[i].set_axis_off()
+    ax[i].imshow(X_train[i])
+    ax[i].set_title(disease_types[np.argmax(Y_train[i])])
 
 
-#Saving Model
-new_model.save('./model/Plant_Detection_model_final.h5')
+EPOCHS = 50
+SIZE=64
+N_ch=3
+
+
+def build_densenet():
+    densenet = DenseNet121(weights='imagenet', include_top=False)
+
+    input = Input(shape=(SIZE, SIZE, N_ch))
+    x = Conv2D(3, (3, 3), padding='same')(input)
+    
+    x = densenet(x)
+    
+    x = GlobalAveragePooling2D()(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.5)(x)
+    x = Dense(256, activation='relu')(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.5)(x)
+
+    # multi output
+    output = Dense(15,activation = 'softmax', name='root')(x)
+ 
+
+    # model
+    model = Model(input,output)
+    
+    optimizer = Adam(lr=0.002, beta_1=0.9, beta_2=0.999, epsilon=0.1, decay=0.0)
+    model.compile(loss='categorical_crossentropy', optimizer=optimizer, metrics=['accuracy'])
+    model.summary()
+    
+    return model
+
+
+model = build_densenet()
+annealer = ReduceLROnPlateau(monitor='val_accuracy', factor=0.5, patience=5, verbose=1, min_lr=1e-3)
+checkpoint = ModelCheckpoint('model.h5', verbose=1, save_best_only=True)
+# Generates batches of image data with data augmentation
+datagen = ImageDataGenerator(rotation_range=360, # Degree range for random rotations
+                        width_shift_range=0.2, # Range for random horizontal shifts
+                        height_shift_range=0.2, # Range for random vertical shifts
+                        zoom_range=0.2, # Range for random zoom
+                        horizontal_flip=True, # Randomly flip inputs horizontally
+                        vertical_flip=True) # Randomly flip inputs vertically
+
+datagen.fit(X_train)
+# Fits the model on batches with real-time data augmentation
+hist = model.fit_generator(datagen.flow(X_train, Y_train, batch_size=BATCH_SIZE),
+               steps_per_epoch=X_train.shape[0] // BATCH_SIZE,
+               epochs=EPOCHS,
+               verbose=2,
+               callbacks=[annealer, checkpoint],
+               validation_data=(X_val, Y_val))
+
+
+#model = load_model('../output/kaggle/working/model.h5')
+final_loss, final_accuracy = model.evaluate(X_val, Y_val)
+print('Final Loss: {}, Final Accuracy: {}'.format(final_loss, final_accuracy))
+
+Y_pred = model.predict(X_val)
+
+Y_pred = np.argmax(Y_pred, axis=1)
+Y_true = np.argmax(Y_val, axis=1)
+
+cm = confusion_matrix(Y_true, Y_pred)
+plt.figure(figsize=(12, 12))
+ax = sns.heatmap(cm, cmap=plt.cm.Greens, annot=True, square=True, xticklabels=disease_types, yticklabels=disease_types)
+ax.set_ylabel('Actual', fontsize=40)
+ax.set_xlabel('Predicted', fontsize=40)
+
+
+# accuracy plot 
+plt.plot(hist.history['accuracy'])
+plt.plot(hist.history['val_accuracy'])
+plt.title('model accuracy')
+plt.ylabel('accuracy')
+plt.xlabel('epoch')
+plt.legend(['train', 'test'], loc='upper left')
+plt.show()
+
+# loss plot
+plt.plot(hist.history['loss'])
+plt.plot(hist.history['val_loss'])
+plt.title('model loss')
+plt.ylabel('loss')
+plt.xlabel('epoch')
+plt.legend(['train', 'test'], loc='upper left')
+plt.show()
+
+
+# # Testing Disease Prediction
+
+from skimage import io
+# from keras.preprocessing import image
+import keras.utils as image
+#path='imbalanced/Scratch/Scratch_400.jpg'
+img = image.load_img('./public/imgs/image1.jpg', grayscale=False, target_size=(64, 64))
+show_img=image.load_img('./public/imgs/image2.jpg', grayscale=False, target_size=(200, 200))
+disease_class = ['Pepper__bell___Bacterial_spot','Pepper__bell___healthy','Potato___Early_blight','Potato___Late_blight','Potato___healthy','Tomato_Bacterial_spot','Tomato_Early_blight','Tomato_Late_blight','Tomato_Leaf_Mold','Tomato_Septoria_leaf_spot','Tomato_Spider_mites_Two_spotted_spider_mite','Tomato__Target_Spot','Tomato__Tomato_YellowLeaf__Curl_Virus','Tomato__Tomato_mosaic_virus','Tomato_healthy']
+x = image.img_to_array(img)
+x = np.expand_dims(x, axis = 0)
+#x = np.array(x, 'float32')
+x /= 255
+
+custom = model.predict(x)
+print(custom[0])
+
+
+
+x = x.reshape([64, 64]);
+
+plt.gray()
+plt.imshow(show_img)
+plt.show()
+
+a=custom[0]
+ind=np.argmax(a)
+        
+print('Prediction:',disease_class[ind])
